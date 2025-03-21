@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/diskfs/go-diskfs/util"
+	"github.com/diskfs/go-diskfs/backend"
 )
 
 // Partition represents the structure of a single partition on the disk
@@ -27,6 +27,8 @@ type Partition struct {
 	// we need this for calculations
 	logicalSectorSize  int
 	physicalSectorSize int
+	// partitionUUID is set when retrieving partitions from a Table
+	partitionUUID string
 }
 
 // PartitionEqualBytes compares if the bytes for 2 partitions are equal, ignoring CHS start and end
@@ -46,7 +48,7 @@ func PartitionEqualBytes(b1, b2 []byte) bool {
 		bytes.Equal(b1[12:16], b2[12:16])
 }
 
-// Equal compares if another partition is equal to this one, ignoring CHS start and end
+// Equal compares if another partition is equal to this one, ignoring the UUID and CHS start and end
 func (p *Partition) Equal(p2 *Partition) bool {
 	if p2 == nil {
 		return false
@@ -113,7 +115,7 @@ func partitionFromBytes(b []byte, logicalSectorSize, physicalSectorSize int) (*P
 		EndSector:          b[6],
 		EndCylinder:        b[7],
 		Start:              binary.LittleEndian.Uint32(b[8:12]),
-		Size:               binary.LittleEndian.Uint32(b[12:16]),
+		Size:               binary.LittleEndian.Uint32(b[12:16]), //nolint:gosec // we already checked the length above
 		logicalSectorSize:  logicalSectorSize,
 		physicalSectorSize: physicalSectorSize,
 	}, nil
@@ -121,7 +123,7 @@ func partitionFromBytes(b []byte, logicalSectorSize, physicalSectorSize int) (*P
 
 // WriteContents fills the partition with the contents provided
 // reads from beginning of reader to exactly size of partition in bytes
-func (p *Partition) WriteContents(f util.File, contents io.Reader) (uint64, error) {
+func (p *Partition) WriteContents(f backend.WritableFile, contents io.Reader) (uint64, error) {
 	pss, lss := p.sectorSizes()
 	total := uint64(0)
 
@@ -164,7 +166,7 @@ func (p *Partition) WriteContents(f util.File, contents io.Reader) (uint64, erro
 
 // readContents reads the contents of the partition into a writer
 // streams the entire partition to the writer
-func (p *Partition) ReadContents(f util.File, out io.Writer) (int64, error) {
+func (p *Partition) ReadContents(f backend.File, out io.Writer) (int64, error) {
 	pss, lss := p.sectorSizes()
 	total := int64(0)
 	// chunks of physical sector size for efficient writing
@@ -203,4 +205,10 @@ func (p *Partition) sectorSizes() (physical, logical int) {
 		logical = logicalSectorSize
 	}
 	return physical, logical
+}
+
+// UUID returns the partitions UUID. For MBR based partition tables this is the
+// partition table UUID with the partition number as a suffix.
+func (p *Partition) UUID() string {
+	return p.partitionUUID
 }

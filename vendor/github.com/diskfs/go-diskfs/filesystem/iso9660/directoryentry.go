@@ -119,7 +119,7 @@ func (de *directoryEntry) toBytes(skipExt bool, ceBlocks []uint32) ([][]byte, er
 		filenameBytes = []byte{0x01}
 	default:
 		// first validate the filename
-		err = validateFilename(de.filename, de.isSubdirectory)
+		err = validateFilename(de.filename, de.isSubdirectory, de.filesystem.suspEnabled)
 		if err != nil {
 			nametype := "filename"
 			if de.isSubdirectory {
@@ -189,9 +189,8 @@ func dirEntryExtensionsToBytes(extensions []directoryEntrySystemUseExtension, ma
 			}
 			b = append(b, ce.Bytes()...)
 			break
-		} else {
-			b = append(b, b2...)
 		}
+		b = append(b, b2...)
 	}
 	ret = append(ret, b)
 	if len(continuedBytes) > 0 {
@@ -306,7 +305,7 @@ func parseDirEntry(b []byte, f *FileSystem) (*directoryEntry, error) {
 				offset := int64(ce.Offset())
 				// read it from disk
 				continuationBytes := make([]byte, size)
-				read, err := f.file.ReadAt(continuationBytes, location*f.blocksize+offset)
+				read, err := f.backend.ReadAt(continuationBytes, location*f.blocksize+offset)
 				if err != nil {
 					return nil, fmt.Errorf("error reading continuation entry data at %d: %v", location, err)
 				}
@@ -374,7 +373,7 @@ func (de *directoryEntry) getLocation(p string) (location, size uint32, err erro
 		current := parts[0]
 		// read the directory bytes
 		dirb := make([]byte, de.size)
-		n, err := de.filesystem.file.ReadAt(dirb, int64(de.location)*de.filesystem.blocksize)
+		n, err := de.filesystem.backend.ReadAt(dirb, int64(de.location)*de.filesystem.blocksize)
 		if err != nil {
 			return 0, 0, fmt.Errorf("could not read directory: %v", err)
 		}
@@ -415,7 +414,7 @@ func (de *directoryEntry) getLocation(p string) (location, size uint32, err erro
 							if location2 != 0 {
 								// need to get the directory entry for the child
 								dirb := make([]byte, de.filesystem.blocksize)
-								n, err2 := de.filesystem.file.ReadAt(dirb, int64(location2)*de.filesystem.blocksize)
+								n, err2 := de.filesystem.backend.ReadAt(dirb, int64(location2)*de.filesystem.blocksize)
 								if err2 != nil {
 									return 0, 0, fmt.Errorf("could not read bytes of relocated directory %s from block %d: %v", checkFilename, location2, err2)
 								}
@@ -482,7 +481,22 @@ func (de *directoryEntry) Size() int64 {
 
 // Mode() FileMode     // file mode bits
 func (de *directoryEntry) Mode() os.FileMode {
+	for _, ext := range de.extensions {
+		if s, ok := ext.(rockRidgeSymlink); ok && !s.continued {
+			return 0o755 | os.ModeSymlink
+		}
+	}
 	return 0o755
+}
+
+// Readlink tries to return the target link, only valid for symlinks
+func (de *directoryEntry) ReadLink() (string, bool) {
+	for _, ext := range de.extensions {
+		if s, ok := ext.(rockRidgeSymlink); ok && !s.continued {
+			return s.name, true
+		}
+	}
+	return "", false
 }
 
 // ModTime() time.Time // modification time
@@ -534,16 +548,27 @@ func timeToBytes(t time.Time) []byte {
 }
 
 // convert a string to ascii bytes, but only accept valid d-characters
-func validateFilename(s string, isDir bool) error {
+func validateFilename(s string, isDir, suspExtension bool) error {
 	var err error
+	if suspExtension {
+		err = validateSUSPFilename(s, isDir)
+	} else {
+		err = validateISOFilename(s, isDir)
+	}
+	return err
+}
+
+// validateISOFilename validates a filename that is plain ISO9660-compliant (levels 2 & 3)
+func validateISOFilename(s string, isDir bool) error {
+	var err error
+	// all allowed up to 30 characters, of A-Z,0-9,_
 	if isDir {
-		// directory only allowed up to 8 characters of A-Z,0-9,_
 		re := regexp.MustCompile("^[A-Z0-9_]{1,30}$")
 		if !re.MatchString(s) {
 			err = fmt.Errorf("directory name must be of up to 30 characters from A-Z0-9_")
 		}
 	} else {
-		// filename only allowed up to 8 characters of A-Z,0-9,_, plus an optional '.' plus up to 3 characters of A-Z,0-9,_, plus must have ";1"
+		// filename also allowed an optional '.' plus up to 3 characters of A-Z,0-9,_, plus must have ";1"
 		re := regexp.MustCompile("^[A-Z0-9_]+(.[A-Z0-9_]*)?;1$")
 		switch {
 		case !re.MatchString(s):
@@ -551,6 +576,20 @@ func validateFilename(s string, isDir bool) error {
 		case len(strings.ReplaceAll(s, ".", "")) > 30:
 			err = fmt.Errorf("file name must be at most 30 characters, not including the separator '.'")
 		}
+	}
+	return err
+}
+
+// validateSUSPFilename validates a filename that is Rock Ridge compliant
+func validateSUSPFilename(s string, _ bool) error {
+	var err error
+	// all allowed up to 255 characters of any kind, except null (0x0) and '/'
+	re := regexp.MustCompile(`^[^\x00/]*$`)
+	switch {
+	case len(s) > 255:
+		err = fmt.Errorf("filename must be at most 255 characters")
+	case !re.MatchString(s):
+		err = fmt.Errorf("filename must not include / or null characters")
 	}
 	return err
 }
