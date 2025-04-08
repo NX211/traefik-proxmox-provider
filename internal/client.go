@@ -9,6 +9,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -200,4 +202,54 @@ func (c *ProxmoxClient) GetVMNetworkInterfaces(ctx context.Context, nodeName str
 		return nil, err
 	}
 	return &response.Data, nil
+}
+
+// GetContainerNetworkInterfaces retrieves network interfaces from a container
+func (c *ProxmoxClient) GetContainerNetworkInterfaces(ctx context.Context, nodeName string, vmID uint64) (*ParsedAgentInterfaces, error) {
+	var response struct {
+		Data []struct {
+			Inet string `json:"inet"`
+		} `json:"data"`
+	}
+	err := c.Get(ctx, fmt.Sprintf("/nodes/%s/lxc/%d/interfaces", nodeName, vmID), &response)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &ParsedAgentInterfaces{
+		Result: make([]struct {
+			IPAddresses []IP `json:"ip-addresses"`
+		}, 0),
+	}
+
+	for _, iface := range response.Data {
+		if iface.Inet == "" {
+			continue
+		}
+
+		// Split IP and prefix
+		ipParts := strings.Split(iface.Inet, "/")
+		if len(ipParts) != 2 {
+			continue
+		}
+
+		prefix, err := strconv.ParseUint(ipParts[1], 10, 64)
+		if err != nil {
+			continue
+		}
+
+		result.Result = append(result.Result, struct {
+			IPAddresses []IP `json:"ip-addresses"`
+		}{
+			IPAddresses: []IP{
+				{
+					Address:     ipParts[0],
+					AddressType: "ipv4",
+					Prefix:      prefix,
+				},
+			},
+		})
+	}
+
+	return result, nil
 } 
