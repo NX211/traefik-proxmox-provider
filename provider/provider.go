@@ -266,7 +266,14 @@ func scanServices(client *internal.ProxmoxClient, ctx context.Context, nodeName 
 			traefikConfig := config.GetTraefikMap()
 			log.Printf("Container %s (%d) traefik config: %v", ct.Name, ct.VMID, traefikConfig)
 			
-			service := internal.NewService(ct.VMID, ct.Name, traefikConfig)
+			// Get container hostname
+			hostname, err := client.GetContainerHostname(ctx, nodeName, ct.VMID)
+			if err != nil {
+				log.Printf("Error getting container hostname for %d: %v", ct.VMID, err)
+				hostname = ct.Name // Fallback to container name
+			}
+			
+			service := internal.NewService(ct.VMID, hostname, traefikConfig)
 			
 			ips, err := getIPsOfService(client, ctx, nodeName, ct.VMID, true)
 			if err == nil {

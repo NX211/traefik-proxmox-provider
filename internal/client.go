@@ -252,4 +252,18 @@ func (c *ProxmoxClient) GetContainerNetworkInterfaces(ctx context.Context, nodeN
 	}
 
 	return result, nil
+}
+
+// GetContainerHostname retrieves the hostname of a container
+func (c *ProxmoxClient) GetContainerHostname(ctx context.Context, nodeName string, vmID uint64) (string, error) {
+	var response struct {
+		Data struct {
+			Hostname string `json:"hostname"`
+		} `json:"data"`
+	}
+	err := c.Get(ctx, fmt.Sprintf("/nodes/%s/lxc/%d/status/current", nodeName, vmID), &response)
+	if err != nil {
+		return "", err
+	}
+	return response.Data.Hostname, nil
 } 
