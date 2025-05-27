@@ -200,12 +200,36 @@ func getServiceMap(client *internal.ProxmoxClient, ctx context.Context) (map[str
 	return servicesMap, nil
 }
 
-func getIPsOfService(client *internal.ProxmoxClient, ctx context.Context, nodeName string, vmID uint64) (ips []internal.IP, err error) {
-	interfaces, err := client.GetVMNetworkInterfaces(ctx, nodeName, vmID)
-	if err != nil {
-		return nil, fmt.Errorf("error getting network interfaces: %w", err)
+func getIPsOfService(client *internal.ProxmoxClient, ctx context.Context, nodeName string, vmID uint64, isContainer bool) (ips []internal.IP, err error) {
+	var agentInterfaces *internal.ParsedAgentInterfaces
+	if isContainer {
+		agentInterfaces, err = client.GetContainerNetworkInterfaces(ctx, nodeName, vmID)
+		if err != nil {
+			log.Printf("DEBUG: Error getting container network interfaces for %s/%d: %v", nodeName, vmID, err)
+			return nil, fmt.Errorf("error getting container network interfaces: %w", err)
+		}
+	} else {
+		agentInterfaces, err = client.GetVMNetworkInterfaces(ctx, nodeName, vmID)
+		if err != nil {
+			log.Printf("DEBUG: Error getting VM network interfaces for %s/%d: %v", nodeName, vmID, err)
+			return nil, fmt.Errorf("error getting VM network interfaces: %w", err)
+		}
 	}
-	return interfaces.GetIPs(), nil
+
+	rawIPs := agentInterfaces.GetIPs()
+
+	filteredIPs := make([]internal.IP, 0)
+	for _, ip := range rawIPs {
+		if (ip.AddressType == "ipv4" || ip.AddressType == "inet") && ip.Address != "127.0.0.1" {
+			filteredIPs = append(filteredIPs, ip)
+		}
+	}
+
+	if len(filteredIPs) == 0 && client.LogLevel == internal.LogLevelDebug {
+		log.Printf("DEBUG: No valid IPs found for %s/%d (isContainer: %t). Raw IPs were: %+v", nodeName, vmID, isContainer, rawIPs)
+	}
+
+	return filteredIPs, nil
 }
 
 func scanServices(client *internal.ProxmoxClient, ctx context.Context, nodeName string) (services []internal.Service, err error) {
@@ -230,11 +254,11 @@ func scanServices(client *internal.ProxmoxClient, ctx context.Context, nodeName 
 			
 			service := internal.NewService(vm.VMID, vm.Name, traefikConfig)
 			
-			ips, err := getIPsOfService(client, ctx, nodeName, vm.VMID)
+			ips, err := getIPsOfService(client, ctx, nodeName, vm.VMID, false)
 			if err == nil {
 				service.IPs = ips
 			}
-			
+
 			services = append(services, service)
 		}
 	}
@@ -247,25 +271,25 @@ func scanServices(client *internal.ProxmoxClient, ctx context.Context, nodeName 
 
 	for _, ct := range cts {
 		log.Printf("Scanning container %s/%s (%d): %s", nodeName, ct.Name, ct.VMID, ct.Status)
-		
+
 		if ct.Status == "running" {
 			config, err := client.GetContainerConfig(ctx, nodeName, ct.VMID)
 			if err != nil {
 				log.Printf("Error getting container config for %d: %v", ct.VMID, err)
 				continue
 			}
-			
+
 			traefikConfig := config.GetTraefikMap()
 			log.Printf("Container %s (%d) traefik config: %v", ct.Name, ct.VMID, traefikConfig)
-			
+
 			service := internal.NewService(ct.VMID, ct.Name, traefikConfig)
-			
+
 			// Try to get container IPs if possible
-			ips, err := getIPsOfService(client, ctx, nodeName, ct.VMID)
+			ips, err := getIPsOfService(client, ctx, nodeName, ct.VMID, true)
 			if err == nil {
 				service.IPs = ips
 			}
-			
+
 			services = append(services, service)
 		}
 	}

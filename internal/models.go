@@ -14,6 +14,14 @@ type ParsedAgentInterfaces struct {
 	} `json:"result"`
 }
 
+type ContainerNetworkInterface struct {
+	Name            string `json:"name"`
+	HardwareAddress string `json:"hardware-address"`
+	Inet            string `json:"inet"`
+	Inet6           string `json:"inet6"`
+	IPAddresses     []IP   `json:"ip-addresses"`
+}
+
 type Node struct {
 	ID     string `json:"id,omitempty"`
 	Name   string `json:"node,omitempty"`
@@ -32,7 +40,7 @@ type VirtualMachine struct {
 
 type Container struct {
 	VMID   uint64 `json:"vmid"`
-	Name   string `json:"name"`
+	Name   string
 	Status string `json:"status"`
 }
 

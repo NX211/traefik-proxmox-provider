@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv" // Added import
 	"time"
 )
 
@@ -200,4 +201,59 @@ func (c *ProxmoxClient) GetVMNetworkInterfaces(ctx context.Context, nodeName str
 		return nil, err
 	}
 	return &response.Data, nil
-} 
+}
+
+// GetContainerNetworkInterfaces retrieves network interfaces from a container
+func (c *ProxmoxClient) GetContainerNetworkInterfaces(ctx context.Context, nodeName string, vmID uint64) (*ParsedAgentInterfaces, error) {
+	var response struct {
+		Data []struct {
+			Name            string `json:"name"`
+			HardwareAddress string `json:"hardware-address"`
+			Inet            string `json:"inet"`
+			Inet6           string `json:"inet6"`
+			IPAddresses     []struct {
+				Address     string      `json:"ip-address,omitempty"`
+				AddressType string      `json:"ip-address-type,omitempty"`
+				Prefix      json.Number `json:"prefix,omitempty"` // Use json.Number
+			} `json:"ip-addresses"`
+			HWAddr string `json:"hwaddr"`
+		} `json:"data"`
+	}
+	err := c.Get(ctx, fmt.Sprintf("/nodes/%s/lxc/%d/interfaces", nodeName, vmID), &response)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &ParsedAgentInterfaces{
+		Result: make([]struct {
+			IPAddresses []IP `json:"ip-addresses"`
+		}, 0),
+	}
+
+	for _, iface := range response.Data {
+		var ips []IP
+		for _, ip := range iface.IPAddresses {
+			prefixUint, err := strconv.ParseUint(ip.Prefix.String(), 10, 64) // Changed to use strconv.ParseUint
+			if err != nil {
+				// Log error but continue, as some IPs might be valid
+				if c.LogLevel == LogLevelDebug {
+					log.Printf("DEBUG: Failed to parse prefix string '%s' to uint64 for IP %s: %v", ip.Prefix.String(), ip.Address, err)
+				}
+				continue
+			}
+			ips = append(ips, IP{
+				Address:     ip.Address,
+				AddressType: ip.AddressType,
+				Prefix:      prefixUint,
+			})
+		}
+
+		result.Result = append(result.Result, struct {
+			IPAddresses []IP `json:"ip-addresses"`
+		}{
+			IPAddresses: ips,
+		})
+	}
+
+	return result, nil
+}
