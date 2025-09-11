@@ -200,7 +200,7 @@ func TestProviderParserConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config, err := newParserConfig(tt.apiEndpoint, tt.tokenID, tt.token)
+			config, err := newParserConfig(tt.apiEndpoint, tt.tokenID, tt.token, "debug", true)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("newParserConfig() error = %v, wantErr %v", err, tt.wantErr)
 				return
