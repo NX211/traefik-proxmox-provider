@@ -60,7 +60,11 @@ The Traefik Proxmox Provider needs an API token with specific permissions to rea
 
 ```bash
 # Create a role for Traefik provider with minimum required permissions
+## For Proxmox VE 8.x or earlier use:
 pveum role add traefik-provider -privs "VM.Audit,VM.Monitor,Sys.Audit,Datastore.Audit"
+
+## For Proxmox VE 9.0 or later use:
+pveum role add traefik-provider -privs "VM.Audit,Sys.Audit,Datastore.Audit"
 
 # Create an API token for your user (replace with your actual username)
 pveum user token add root@pam traefik_prod
