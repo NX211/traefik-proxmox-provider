@@ -14,20 +14,6 @@ type ParsedAgentInterfaces struct {
 	} `json:"result"`
 }
 
-type ContainerNetworkInterface struct {
-	Name            string `json:"name"`
-	HardwareAddress string `json:"hardware-address"`
-	Inet            string `json:"inet"`
-	Inet6           string `json:"inet6"`
-	IPAddresses     []IP   `json:"ip-addresses"`
-}
-
-type Node struct {
-	ID     string `json:"id,omitempty"`
-	Name   string `json:"node,omitempty"`
-	Status string `json:"status,omitempty"`
-}
-
 type NodeStatus struct {
 	Node string `json:"node"`
 }
@@ -40,7 +26,7 @@ type VirtualMachine struct {
 
 type Container struct {
 	VMID   uint64 `json:"vmid"`
-	Name   string
+	Name   string `json:"name"`
 	Status string `json:"status"`
 }
 
@@ -68,8 +54,12 @@ func NewService(id uint64, name string, config map[string]string) Service {
 func (pc *ParsedConfig) GetTraefikMap() map[string]string {
 	const separator = "="
 
+	// Normalize space-separated traefik labels (e.g. from OCI containers)
+	// into newline-separated labels so they are parsed individually.
+	normalized := strings.ReplaceAll(pc.Description, " traefik.", "\ntraefik.")
+
 	m := make(map[string]string)
-	lines := strings.Split(pc.Description, "\n")
+	lines := strings.Split(normalized, "\n")
 	for _, line := range lines {
 		key, value, found := strings.Cut(line, separator)
 		if !found {

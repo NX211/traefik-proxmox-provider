@@ -60,11 +60,12 @@ The Traefik Proxmox Provider needs an API token with specific permissions to rea
 
 ```bash
 # Create a role for Traefik provider with minimum required permissions
-## For Proxmox VE 8.x or earlier use:
+
+## For Proxmox VE 8.x or earlier:
 pveum role add traefik-provider -privs "VM.Audit,VM.Monitor,Sys.Audit,Datastore.Audit"
 
-## For Proxmox VE 9.0 or later use:
-pveum role add traefik-provider -privs "VM.Audit,Sys.Audit,Datastore.Audit"
+## For Proxmox VE 9.0 or later (VM.Monitor was removed and replaced with granular privileges):
+pveum role add traefik-provider -privs "VM.Audit,VM.GuestAgent.Audit,Sys.Audit,Datastore.Audit"
 
 # Create an API token for your user (replace with your actual username)
 pveum user token add root@pam traefik_prod
@@ -72,6 +73,8 @@ pveum user token add root@pam traefik_prod
 # Assign the role to the token for all paths
 pveum acl modify / -token 'root@pam!traefik_prod' -role traefik-provider
 ```
+
+> **Note:** If you are upgrading from Proxmox VE 8.x to 9.x, you must update your API token role. The `VM.Monitor` privilege was removed in PVE 9.0 and replaced with `VM.GuestAgent.Audit` (required for reading VM network interfaces via the QEMU guest agent). Without this, the provider will receive 403 errors when discovering VM IP addresses.
 
 Make sure to save the API token value when it's displayed, as it won't be shown again.
 

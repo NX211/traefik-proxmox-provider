@@ -102,6 +102,61 @@ func TestParsedConfig_GetTraefikMap(t *testing.T) {
 	}
 }
 
+func TestParsedConfig_GetTraefikMap_SpaceSeparated(t *testing.T) {
+	// OCI containers in Proxmox may return description with space-separated labels
+	// instead of newline-separated ones.
+	pc := ParsedConfig{
+		Description: "traefik.enable=true traefik.http.routers.retro.entrypoints=websecure traefik.http.routers.retro.rule=Host(`retro.example.com`) traefik.http.services.retro.loadbalancer.server.port=80",
+	}
+
+	m := pc.GetTraefikMap()
+
+	if len(m) != 4 {
+		t.Errorf("Expected 4 config items, got %d", len(m))
+	}
+
+	if m["traefik.enable"] != "true" {
+		t.Errorf("Expected traefik.enable=true, got %s", m["traefik.enable"])
+	}
+
+	if m["traefik.http.routers.retro.entrypoints"] != "websecure" {
+		t.Errorf("Expected entrypoints=websecure, got %s", m["traefik.http.routers.retro.entrypoints"])
+	}
+
+	if m["traefik.http.routers.retro.rule"] != "Host(`retro.example.com`)" {
+		t.Errorf("Expected correct router rule, got %s", m["traefik.http.routers.retro.rule"])
+	}
+
+	if m["traefik.http.services.retro.loadbalancer.server.port"] != "80" {
+		t.Errorf("Expected port=80, got %s", m["traefik.http.services.retro.loadbalancer.server.port"])
+	}
+}
+
+func TestParsedConfig_GetTraefikMap_MixedSeparators(t *testing.T) {
+	// Description with non-traefik text, newlines, and space-separated traefik labels.
+	pc := ParsedConfig{
+		Description: "My application server\n\ntraefik.enable=true traefik.http.routers.app.rule=Host(`app.example.com`)\ntraefik.http.services.app.loadbalancer.server.port=3000",
+	}
+
+	m := pc.GetTraefikMap()
+
+	if len(m) != 3 {
+		t.Errorf("Expected 3 config items, got %d", len(m))
+	}
+
+	if m["traefik.enable"] != "true" {
+		t.Errorf("Expected traefik.enable=true, got %s", m["traefik.enable"])
+	}
+
+	if m["traefik.http.routers.app.rule"] != "Host(`app.example.com`)" {
+		t.Errorf("Expected correct router rule, got %s", m["traefik.http.routers.app.rule"])
+	}
+
+	if m["traefik.http.services.app.loadbalancer.server.port"] != "3000" {
+		t.Errorf("Expected port=3000, got %s", m["traefik.http.services.app.loadbalancer.server.port"])
+	}
+}
+
 func TestParsedAgentInterfaces_GetIPs(t *testing.T) {
 	pai := ParsedAgentInterfaces{
 		Result: []struct {
