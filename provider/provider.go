@@ -505,6 +505,11 @@ func applyServiceOptions(lb *dynamic.ServersLoadBalancer, service internal.Servi
 			FlushInterval: flushInterval,
 		}
 	}
+	
+	// Handle ServerTransport
+	if serverTransport, exists := service.Config[prefix+".serverstransport"]; exists {
+		lb.ServersTransport = serverTransport
+	}
 }
 
 // Handle TLS configuration
