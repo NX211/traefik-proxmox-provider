@@ -63,13 +63,12 @@ func New(ctx context.Context, config *Config, name string) (*Provider, error) {
 		config.ApiEndpoint,
 		config.ApiTokenId,
 		config.ApiToken,
+		config.ApiLogging,
+		config.ApiValidateSSL == "true",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("invalid parser config: %w", err)
 	}
-
-	pc.LogLevel = config.ApiLogging
-	pc.ValidateSSL = config.ApiValidateSSL == "true"
 	client := newClient(pc)
 
 	if err := logVersion(client, ctx); err != nil {
@@ -155,7 +154,7 @@ type ParserConfig struct {
 	ValidateSSL bool
 }
 
-func newParserConfig(apiEndpoint, tokenID, token string) (ParserConfig, error) {
+func newParserConfig(apiEndpoint, tokenID, token string, logLevel string, validateSSL bool) (ParserConfig, error) {
 	if apiEndpoint == "" || tokenID == "" || token == "" {
 		return ParserConfig{}, errors.New("missing mandatory values: apiEndpoint, tokenID or token")
 	}
@@ -163,8 +162,8 @@ func newParserConfig(apiEndpoint, tokenID, token string) (ParserConfig, error) {
 		ApiEndpoint: apiEndpoint,
 		TokenId:     tokenID,
 		Token:       token,
-		LogLevel:    "info",
-		ValidateSSL: true,
+		LogLevel:    logLevel,
+		ValidateSSL: validateSSL,
 	}, nil
 }
 
@@ -205,13 +204,13 @@ func getIPsOfService(client *internal.ProxmoxClient, ctx context.Context, nodeNa
 	if isContainer {
 		agentInterfaces, err = client.GetContainerNetworkInterfaces(ctx, nodeName, vmID)
 		if err != nil {
-			log.Printf("DEBUG: Error getting container network interfaces for %s/%d: %v", nodeName, vmID, err)
+			log.Printf("ERROR: Error getting container network interfaces for %s/%d: %v", nodeName, vmID, err)
 			return nil, fmt.Errorf("error getting container network interfaces: %w", err)
 		}
 	} else {
 		agentInterfaces, err = client.GetVMNetworkInterfaces(ctx, nodeName, vmID)
 		if err != nil {
-			log.Printf("DEBUG: Error getting VM network interfaces for %s/%d: %v", nodeName, vmID, err)
+			log.Printf("ERROR: Error getting VM network interfaces for %s/%d: %v", nodeName, vmID, err)
 			return nil, fmt.Errorf("error getting VM network interfaces: %w", err)
 		}
 	}
@@ -226,7 +225,7 @@ func getIPsOfService(client *internal.ProxmoxClient, ctx context.Context, nodeNa
 	}
 
 	if len(filteredIPs) == 0 && client.LogLevel == internal.LogLevelDebug {
-		log.Printf("DEBUG: No valid IPs found for %s/%d (isContainer: %t). Raw IPs were: %+v", nodeName, vmID, isContainer, rawIPs)
+		log.Printf("ERROR: No valid IPs found for %s/%d (isContainer: %t). Raw IPs were: %+v", nodeName, vmID, isContainer, rawIPs)
 	}
 
 	return filteredIPs, nil
@@ -240,17 +239,21 @@ func scanServices(client *internal.ProxmoxClient, ctx context.Context, nodeName 
 	}
 
 	for _, vm := range vms {
-		log.Printf("Scanning VM %s/%s (%d): %s", nodeName, vm.Name, vm.VMID, vm.Status)
+		if client.LogLevel == "debug" {
+			log.Printf("DEBUG: Scanning VM %s/%s (%d): %s", nodeName, vm.Name, vm.VMID, vm.Status)
+		}
 		
 		if vm.Status == "running" {
 			config, err := client.GetVMConfig(ctx, nodeName, vm.VMID)
 			if err != nil {
-				log.Printf("Error getting VM config for %d: %v", vm.VMID, err)
+				log.Printf("ERROR: Error getting VM config for %d: %v", vm.VMID, err)
 				continue
 			}
 			
 			traefikConfig := config.GetTraefikMap()
-			log.Printf("VM %s (%d) traefik config: %v", vm.Name, vm.VMID, traefikConfig)
+			if client.LogLevel == "debug" {
+				log.Printf("VM %s (%d) traefik config: %v", vm.Name, vm.VMID, traefikConfig)
+			}
 			
 			service := internal.NewService(vm.VMID, vm.Name, traefikConfig)
 			
@@ -270,17 +273,22 @@ func scanServices(client *internal.ProxmoxClient, ctx context.Context, nodeName 
 	}
 
 	for _, ct := range cts {
-		log.Printf("Scanning container %s/%s (%d): %s", nodeName, ct.Name, ct.VMID, ct.Status)
+		if client.LogLevel == "debug" {
+			log.Printf("DEBUG: Scanning container %s/%s (%d): %s", nodeName, ct.Name, ct.VMID, ct.Status)
+		}
+			
 
 		if ct.Status == "running" {
 			config, err := client.GetContainerConfig(ctx, nodeName, ct.VMID)
 			if err != nil {
-				log.Printf("Error getting container config for %d: %v", ct.VMID, err)
+				log.Printf("ERROR: Error getting container config for %d: %v", ct.VMID, err)
 				continue
 			}
 
 			traefikConfig := config.GetTraefikMap()
-			log.Printf("Container %s (%d) traefik config: %v", ct.Name, ct.VMID, traefikConfig)
+			if client.LogLevel == "debug" {
+				log.Printf("DEBUG: Container %s (%d) traefik config: %v", ct.Name, ct.VMID, traefikConfig)
+			}
 
 			service := internal.NewService(ct.VMID, ct.Name, traefikConfig)
 
