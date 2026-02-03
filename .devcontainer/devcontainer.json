@@ -1,0 +1,29 @@
+{
+  "name": "Traefik Proxmox Provider",
+  "image": "mcr.microsoft.com/devcontainers/go:1-1.23",
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "go.useLanguageServer": true,
+        "go.lintTool": "golangci-lint",
+        "go.lintFlags": ["--fast"],
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+          "source.organizeImports": "explicit"
+        },
+        "[go]": {
+          "editor.defaultFormatter": "golang.go"
+        }
+      },
+      "extensions": [
+        "golang.go",
+        "eamodio.gitlens"
+      ]
+    }
+  },
+  "postCreateCommand": "go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest && go install github.com/traefik/yaegi/cmd/yaegi@latest",
+  "remoteUser": "vscode"
+}

@@ -3,3 +3,4 @@ proxmox-plugin
 .envrc
 .vscode
 .ansible
+.DS_Store
