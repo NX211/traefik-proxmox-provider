@@ -327,3 +327,70 @@ func TestGetServiceURL(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleRouterTLS_ArrayDomains(t *testing.T) {
+	tests := []struct {
+		name           string
+		config         map[string]string
+		expectedMain   []string
+		expectedSANs   [][]string
+		expectNil      bool
+	}{
+		{
+			name: "Array syntax with main and sans",
+			config: map[string]string{
+				"traefik.http.routers.test.tls.domains[0].main": "example.com",
+				"traefik.http.routers.test.tls.domains[0].sans": "*.example.com,www.example.com",
+				"traefik.http.routers.test.tls.domains[1].main": "another.com",
+			},
+			expectedMain: []string{"example.com", "another.com"},
+			expectedSANs: [][]string{{"*.example.com", "www.example.com"}, nil},
+		},
+		{
+			name: "Simple domains fallback",
+			config: map[string]string{
+				"traefik.http.routers.test.tls.domains": "example.com,another.com",
+			},
+			expectedMain: []string{"example.com", "another.com"},
+			expectedSANs: [][]string{nil, nil},
+		},
+		{
+			name:      "No TLS config",
+			config:    map[string]string{},
+			expectNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := internal.Service{Config: tt.config}
+			tlsConfig := handleRouterTLS(service, "traefik.http.routers.test")
+
+			if tt.expectNil {
+				if tlsConfig != nil {
+					t.Error("Expected nil TLS config")
+				}
+				return
+			}
+
+			if tlsConfig == nil {
+				t.Fatal("Expected non-nil TLS config")
+			}
+
+			if len(tlsConfig.Domains) != len(tt.expectedMain) {
+				t.Fatalf("Expected %d domains, got %d", len(tt.expectedMain), len(tlsConfig.Domains))
+			}
+
+			for i, domain := range tlsConfig.Domains {
+				if domain.Main != tt.expectedMain[i] {
+					t.Errorf("Domain[%d].Main = %s, want %s", i, domain.Main, tt.expectedMain[i])
+				}
+				if tt.expectedSANs[i] != nil {
+					if len(domain.SANs) != len(tt.expectedSANs[i]) {
+						t.Errorf("Domain[%d].SANs length = %d, want %d", i, len(domain.SANs), len(tt.expectedSANs[i]))
+					}
+				}
+			}
+		})
+	}
+}

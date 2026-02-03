@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -522,49 +525,65 @@ func applyServiceOptions(lb *dynamic.ServersLoadBalancer, service internal.Servi
 
 // Handle TLS configuration
 func handleRouterTLS(service internal.Service, prefix string) *dynamic.RouterTLSConfig {
-	// Check if TLS is enabled
 	tlsEnabled := false
 	if tlsLabel, exists := service.Config[prefix+".tls"]; exists {
 		if tlsLabel == "true" {
 			tlsEnabled = true
 		}
 	}
-	
-	// If specific TLS settings exist, TLS is implicitly enabled
+
 	certResolver, hasCertResolver := service.Config[prefix+".tls.certresolver"]
 	domains, hasDomains := service.Config[prefix+".tls.domains"]
 	options, hasOptions := service.Config[prefix+".tls.options"]
-	
-	if !tlsEnabled && !hasCertResolver && !hasDomains && !hasOptions {
+
+	// Check for array-indexed domains: tls.domains[N].main/sans
+	domainPattern := regexp.MustCompile(`\.tls\.domains\[(\d+)\]\.(main|sans)$`)
+	domainMap := make(map[int]*types.Domain)
+	for key, value := range service.Config {
+		if matches := domainPattern.FindStringSubmatch(key); matches != nil {
+			idx, _ := strconv.Atoi(matches[1])
+			if domainMap[idx] == nil {
+				domainMap[idx] = &types.Domain{}
+			}
+			if matches[2] == "main" {
+				domainMap[idx].Main = value
+			} else {
+				domainMap[idx].SANs = strings.Split(value, ",")
+			}
+		}
+	}
+	hasArrayDomains := len(domainMap) > 0
+
+	if !tlsEnabled && !hasCertResolver && !hasDomains && !hasOptions && !hasArrayDomains {
 		return nil
 	}
-	
-	// Create TLS config
+
 	tlsConfig := &dynamic.RouterTLSConfig{}
-	
-	// Add cert resolver if specified
+
 	if hasCertResolver {
 		tlsConfig.CertResolver = certResolver
 	}
-	
-	// Add options if specified
+
 	if hasOptions {
 		tlsConfig.Options = options
 	}
-	
-	// Add domains if specified
-	if hasDomains {
-		// Split domains by comma
-		domainList := strings.Split(domains, ",")
-		for _, domain := range domainList {
-			// Create a domain config with Main domain set
-			domainConfig := types.Domain{
-				Main: domain,
-			}
-			tlsConfig.Domains = append(tlsConfig.Domains, domainConfig)
+
+	// Array-indexed domains take precedence
+	if hasArrayDomains {
+		indices := make([]int, 0, len(domainMap))
+		for idx := range domainMap {
+			indices = append(indices, idx)
+		}
+		sort.Ints(indices)
+		for _, idx := range indices {
+			tlsConfig.Domains = append(tlsConfig.Domains, *domainMap[idx])
+		}
+	} else if hasDomains {
+		for _, domain := range strings.Split(domains, ",") {
+			tlsConfig.Domains = append(tlsConfig.Domains, types.Domain{Main: domain})
 		}
 	}
-	
+
 	return tlsConfig
 }
 

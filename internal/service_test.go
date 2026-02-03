@@ -157,6 +157,25 @@ func TestParsedConfig_GetTraefikMap_MixedSeparators(t *testing.T) {
 	}
 }
 
+func TestParsedConfig_GetTraefikMap_CaseInsensitive(t *testing.T) {
+	// Users may use camelCase labels following Traefik documentation,
+	// but we normalize to lowercase for consistent matching.
+	pc := ParsedConfig{
+		Description: "traefik.enable=true\ntraefik.http.services.myapp.loadbalancer.serversTransport=insecure@file",
+	}
+
+	m := pc.GetTraefikMap()
+
+	if len(m) != 2 {
+		t.Errorf("Expected 2 config items, got %d", len(m))
+	}
+
+	// Key should be normalized to lowercase
+	if m["traefik.http.services.myapp.loadbalancer.serverstransport"] != "insecure@file" {
+		t.Errorf("Expected serversTransport to be normalized to lowercase, got %v", m)
+	}
+}
+
 func TestParsedAgentInterfaces_GetIPs(t *testing.T) {
 	pai := ParsedAgentInterfaces{
 		Result: []struct {

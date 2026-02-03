@@ -69,8 +69,8 @@ func (pc *ParsedConfig) GetTraefikMap() map[string]string {
 		key = strings.Trim(key, "\" ")
 		value = strings.Trim(value, "\" ")
 
-		if strings.HasPrefix(key, "traefik.") {
-			m[key] = value
+		if strings.HasPrefix(strings.ToLower(key), "traefik.") {
+			m[strings.ToLower(key)] = value
 		}
 	}
 	return m
