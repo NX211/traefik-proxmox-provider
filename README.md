@@ -240,12 +240,15 @@ traefik.http.routers.multi.priority=100
 
 If your services aren't being discovered:
 
-1. Enable debug logging by setting `apiLogging: "debug"`
-2. Check that VMs/containers have `traefik.enable=true` in their notes field
-3. Verify that VMs/containers are in the "running" state
-4. Check that the provider can successfully connect to your Proxmox API
-5. Verify the API token has sufficient permissions
-6. Check the Traefik logs for any errors related to entrypoints or middleware references
+1. **Enable debug logging**: Set `apiLogging: "debug"` and check Traefik's log file
+2. **Verify VM/container config**: Must have `traefik.enable=true` in notes and be in "running" state
+3. **Test API access** from the Traefik host:
+   ```bash
+   curl -k -H "Authorization: PVEAPIToken=root@pam!traefik_prod=YOUR-TOKEN" \
+     https://proxmox:8006/api2/json/nodes
+   ```
+4. **Check token permissions**: Verify in Proxmox UI under **Datacenter → Permissions → API Tokens**
+5. **Provider config location**: The plugin config belongs in Traefik's **static** config (`traefik.yaml`), not dynamic config
 
 ## Contributing
 
