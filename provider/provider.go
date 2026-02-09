@@ -340,10 +340,11 @@ func generateConfiguration(servicesMap map[string][]internal.Service) *dynamic.C
 				continue
 			}
 			
-			// Extract router and service names from labels
+			// Extract router, service, and middleware names from labels
 			routerPrefixMap := make(map[string]bool)
 			servicePrefixMap := make(map[string]bool)
-			
+			middlewarePrefixMap := make(map[string]string) // name -> type
+
 			for k := range service.Config {
 				if strings.HasPrefix(k, "traefik.http.routers.") {
 					parts := strings.Split(k, ".")
@@ -355,6 +356,12 @@ func generateConfiguration(servicesMap map[string][]internal.Service) *dynamic.C
 					parts := strings.Split(k, ".")
 					if len(parts) > 3 {
 						servicePrefixMap[parts[3]] = true
+					}
+				}
+				if strings.HasPrefix(k, "traefik.http.middlewares.") {
+					parts := strings.Split(k, ".")
+					if len(parts) >= 5 {
+						middlewarePrefixMap[parts[3]] = parts[4]
 					}
 				}
 			}
@@ -421,6 +428,17 @@ func generateConfiguration(servicesMap map[string][]internal.Service) *dynamic.C
 				config.HTTP.Routers[routerName] = router
 			}
 			
+			// Create middlewares
+			for mwName, mwType := range middlewarePrefixMap {
+				mw, err := buildMiddleware(mwType, service.Config, mwName)
+				if err != nil {
+					log.Printf("ERROR: Failed to build middleware %s (type %s): %v", mwName, mwType, err)
+					continue
+				}
+				config.HTTP.Middlewares[mwName] = mw
+				log.Printf("Created middleware %s (type %s)", mwName, mwType)
+			}
+
 			log.Printf("Created router and service for %s (ID: %d)", service.Name, service.ID)
 		}
 	}
