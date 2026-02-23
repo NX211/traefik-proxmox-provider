@@ -48,11 +48,53 @@ providers:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `pollInterval` | `string` | `"30s"` | How often to poll the Proxmox API for changes |
-| `apiEndpoint` | `string` | - | The URL of your Proxmox VE API |
-| `apiTokenId` | `string` | - | The API token ID (e.g., "root@pam!traefik_prod") |
-| `apiToken` | `string` | - | The API token secret |
+| `apiEndpoint` | `string` | - | The URL of your Proxmox VE API (single-node mode) |
+| `apiTokenId` | `string` | - | The API token ID (single-node mode) |
+| `apiToken` | `string` | - | The API token secret (single-node mode) |
 | `apiLogging` | `string` | `"info"` | Log level for API operations ("debug" or "info") |
 | `apiValidateSSL` | `string` | `"true"` | Whether to validate SSL certificates |
+| `nodes` | `[]NodeConfig` | - | List of Proxmox endpoints for multi-node/multi-cluster mode (see below) |
+
+### Multi-Node / Multi-Cluster Support
+
+If your VMs and containers are spread across **separate, independent Proxmox installations** (not in the same cluster), you can use the `nodes` array to configure multiple API endpoints within a single plugin instance. Each entry connects to a different Proxmox API and discovers all nodes/VMs/containers on that endpoint.
+
+> **Note:** If your Proxmox nodes are already in the same cluster, you do **not** need this — the plugin automatically discovers all nodes in a cluster via a single `apiEndpoint`.
+
+Each entry in `nodes` accepts the same fields as the single-node config, plus a `name` field:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `name` | `string` | auto-generated | A logical name for this endpoint (used in logging and to disambiguate auto-generated service IDs) |
+| `apiEndpoint` | `string` | - | The URL of this Proxmox VE API |
+| `apiTokenId` | `string` | - | The API token ID for this endpoint |
+| `apiToken` | `string` | - | The API token secret for this endpoint |
+| `apiLogging` | `string` | `"info"` | Log level for this endpoint |
+| `apiValidateSSL` | `string` | `"true"` | Whether to validate SSL certificates for this endpoint |
+
+Example:
+
+```yaml
+providers:
+  plugin:
+    traefik-proxmox-provider:
+      pollInterval: "30s"
+      nodes:
+        - name: "cluster1"
+          apiEndpoint: "https://pve1.example.com:8006"
+          apiTokenId: "root@pam!traefik"
+          apiToken: "your-token-1"
+          apiValidateSSL: "true"
+        - name: "cluster2"
+          apiEndpoint: "https://pve2.example.com:8006"
+          apiTokenId: "root@pam!traefik"
+          apiToken: "your-token-2"
+          apiValidateSSL: "false"
+```
+
+When multiple nodes are configured and a VM/container has `traefik.enable=true` but no explicit router or service names in its labels, the auto-generated fallback IDs are prefixed with the node `name` to prevent collisions (e.g. `cluster1-myvm-100` instead of `myvm-100`). Explicit names defined in traefik labels (e.g. `traefik.http.routers.myapp.rule=...`) are **not** prefixed — you are responsible for using unique names across clusters.
+
+The single-node flat config (`apiEndpoint`, `apiTokenId`, `apiToken`) is still fully supported for backward compatibility.
 
 ## Proxmox API Token Setup
 

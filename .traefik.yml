@@ -14,7 +14,7 @@ testData:
   apiLogging: "info"
   apiValidateSSL: "true"
 
-# Sample provider configuration
+# Sample provider configuration (single node)
 providers:
   plugin:
     traefik-proxmox-provider:
@@ -24,3 +24,20 @@ providers:
       apiToken: "00000000-0000-0000-0000-000000000000"
       apiLogging: "debug"
       apiValidateSSL: "false"
+
+# Sample provider configuration (multiple nodes/clusters)
+# providers:
+#   plugin:
+#     traefik-proxmox-provider:
+#       pollInterval: "5s"
+#       nodes:
+#         - name: "cluster1"
+#           apiEndpoint: "https://pve1.example.com:8006"
+#           apiTokenId: "root@pam!traefik"
+#           apiToken: "00000000-0000-0000-0000-000000000001"
+#           apiValidateSSL: "true"
+#         - name: "cluster2"
+#           apiEndpoint: "https://pve2.example.com:8006"
+#           apiTokenId: "root@pam!traefik"
+#           apiToken: "00000000-0000-0000-0000-000000000002"
+#           apiValidateSSL: "false"

@@ -148,6 +148,48 @@ func TestProviderValidateConfig(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "Valid multi-node config",
+			config: &Config{
+				PollInterval: "5s",
+				Nodes: []NodeConfig{
+					{
+						Name:        "cluster1",
+						ApiEndpoint: "https://pve1.example.com",
+						ApiTokenId:  "test@pam!test",
+						ApiToken:    "token-1",
+					},
+					{
+						Name:        "cluster2",
+						ApiEndpoint: "https://pve2.example.com",
+						ApiTokenId:  "test@pam!test2",
+						ApiToken:    "token-2",
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Multi-node config with invalid node",
+			config: &Config{
+				PollInterval: "5s",
+				Nodes: []NodeConfig{
+					{
+						Name:        "cluster1",
+						ApiEndpoint: "https://pve1.example.com",
+						ApiTokenId:  "test@pam!test",
+						ApiToken:    "token-1",
+					},
+					{
+						Name:       "cluster2",
+						ApiTokenId: "test@pam!test2",
+						ApiToken:   "token-2",
+						// Missing ApiEndpoint
+					},
+				},
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -326,6 +368,190 @@ func TestGetServiceURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNormalizeNodes(t *testing.T) {
+	t.Run("Legacy flat config", func(t *testing.T) {
+		config := &Config{
+			PollInterval:   "5s",
+			ApiEndpoint:    "https://proxmox.example.com",
+			ApiTokenId:     "test@pam!test",
+			ApiToken:       "test-token",
+			ApiLogging:     "debug",
+			ApiValidateSSL: "false",
+		}
+		nodes := normalizeNodes(config)
+		if len(nodes) != 1 {
+			t.Fatalf("Expected 1 node, got %d", len(nodes))
+		}
+		if nodes[0].Name != "default" {
+			t.Errorf("Expected name 'default', got %s", nodes[0].Name)
+		}
+		if nodes[0].ApiEndpoint != "https://proxmox.example.com" {
+			t.Errorf("Expected endpoint from flat config, got %s", nodes[0].ApiEndpoint)
+		}
+		if nodes[0].ApiLogging != "debug" {
+			t.Errorf("Expected logging 'debug', got %s", nodes[0].ApiLogging)
+		}
+	})
+
+	t.Run("Multi-node config", func(t *testing.T) {
+		config := &Config{
+			PollInterval: "5s",
+			Nodes: []NodeConfig{
+				{
+					Name:        "cluster1",
+					ApiEndpoint: "https://pve1.example.com",
+					ApiTokenId:  "test@pam!test",
+					ApiToken:    "token-1",
+				},
+				{
+					Name:        "cluster2",
+					ApiEndpoint: "https://pve2.example.com",
+					ApiTokenId:  "test@pam!test2",
+					ApiToken:    "token-2",
+				},
+			},
+		}
+		nodes := normalizeNodes(config)
+		if len(nodes) != 2 {
+			t.Fatalf("Expected 2 nodes, got %d", len(nodes))
+		}
+		if nodes[0].Name != "cluster1" {
+			t.Errorf("Expected name 'cluster1', got %s", nodes[0].Name)
+		}
+		if nodes[1].Name != "cluster2" {
+			t.Errorf("Expected name 'cluster2', got %s", nodes[1].Name)
+		}
+	})
+
+	t.Run("Defaults filled in", func(t *testing.T) {
+		config := &Config{
+			PollInterval: "5s",
+			Nodes: []NodeConfig{
+				{
+					ApiEndpoint: "https://pve1.example.com",
+					ApiTokenId:  "test@pam!test",
+					ApiToken:    "token-1",
+					// Name, ApiLogging, ApiValidateSSL omitted
+				},
+			},
+		}
+		nodes := normalizeNodes(config)
+		if nodes[0].Name != "node-0" {
+			t.Errorf("Expected auto-generated name 'node-0', got %s", nodes[0].Name)
+		}
+		if nodes[0].ApiLogging != "info" {
+			t.Errorf("Expected default logging 'info', got %s", nodes[0].ApiLogging)
+		}
+		if nodes[0].ApiValidateSSL != "true" {
+			t.Errorf("Expected default SSL validation 'true', got %s", nodes[0].ApiValidateSSL)
+		}
+	})
+}
+
+func TestGenerateConfiguration_MultiCluster(t *testing.T) {
+	// Two clusters, each with one node and one service that uses
+	// only traefik.enable=true (so the auto-generated defaultID is used).
+	clusterMaps := []clusterServiceMap{
+		{
+			clusterName: "cluster1",
+			services: map[string][]internal.Service{
+				"node1": {
+					{
+						ID:   100,
+						Name: "webserver",
+						IPs:  []internal.IP{{Address: "10.0.0.1", AddressType: "ipv4"}},
+						Config: map[string]string{
+							"traefik.enable": "true",
+						},
+					},
+				},
+			},
+		},
+		{
+			clusterName: "cluster2",
+			services: map[string][]internal.Service{
+				"node2": {
+					{
+						ID:   100, // Same VMID as cluster1 — should not collide
+						Name: "webserver",
+						IPs:  []internal.IP{{Address: "10.0.1.1", AddressType: "ipv4"}},
+						Config: map[string]string{
+							"traefik.enable": "true",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := generateConfiguration(clusterMaps, true)
+
+	// With multiCluster=true, auto-generated IDs should be prefixed.
+	expectedService1 := "cluster1-webserver-100"
+	expectedService2 := "cluster2-webserver-100"
+
+	if _, ok := cfg.HTTP.Services[expectedService1]; !ok {
+		t.Errorf("Expected service %q not found. Services: %v", expectedService1, keys(cfg.HTTP.Services))
+	}
+	if _, ok := cfg.HTTP.Services[expectedService2]; !ok {
+		t.Errorf("Expected service %q not found. Services: %v", expectedService2, keys(cfg.HTTP.Services))
+	}
+	if _, ok := cfg.HTTP.Routers[expectedService1]; !ok {
+		t.Errorf("Expected router %q not found. Routers: %v", expectedService1, keys(cfg.HTTP.Routers))
+	}
+	if _, ok := cfg.HTTP.Routers[expectedService2]; !ok {
+		t.Errorf("Expected router %q not found. Routers: %v", expectedService2, keys(cfg.HTTP.Routers))
+	}
+
+	// Verify they have different server URLs
+	svc1 := cfg.HTTP.Services[expectedService1]
+	svc2 := cfg.HTTP.Services[expectedService2]
+	if len(svc1.LoadBalancer.Servers) == 0 || len(svc2.LoadBalancer.Servers) == 0 {
+		t.Fatal("Expected non-empty servers")
+	}
+	if svc1.LoadBalancer.Servers[0].URL == svc2.LoadBalancer.Servers[0].URL {
+		t.Errorf("Services should have different URLs, both got %s", svc1.LoadBalancer.Servers[0].URL)
+	}
+}
+
+func TestGenerateConfiguration_SingleCluster_NoPrefixing(t *testing.T) {
+	// Single cluster: defaultID should NOT be prefixed.
+	clusterMaps := []clusterServiceMap{
+		{
+			clusterName: "default",
+			services: map[string][]internal.Service{
+				"node1": {
+					{
+						ID:   200,
+						Name: "myapp",
+						IPs:  []internal.IP{{Address: "10.0.0.5", AddressType: "ipv4"}},
+						Config: map[string]string{
+							"traefik.enable": "true",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cfg := generateConfiguration(clusterMaps, false)
+
+	expectedID := "myapp-200"
+	if _, ok := cfg.HTTP.Services[expectedID]; !ok {
+		t.Errorf("Expected service %q not found (should not be prefixed in single-cluster mode). Services: %v",
+			expectedID, keys(cfg.HTTP.Services))
+	}
+}
+
+// keys is a test helper that returns sorted map keys for readable error messages.
+func keys[V any](m map[string]V) []string {
+	result := make([]string, 0, len(m))
+	for k := range m {
+		result = append(result, k)
+	}
+	return result
 }
 
 func TestHandleRouterTLS_ArrayDomains(t *testing.T) {
