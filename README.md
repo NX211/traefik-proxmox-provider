@@ -23,7 +23,7 @@ experimental:
   plugins:
     traefik-proxmox-provider:
       moduleName: github.com/NX211/traefik-proxmox-provider
-      version: v0.7.0
+      version: v0.8.1
 ```
 
 2. Configure the provider in your dynamic configuration:
