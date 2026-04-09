@@ -15,7 +15,8 @@ type ParsedAgentInterfaces struct {
 }
 
 type NodeStatus struct {
-	Node string `json:"node"`
+	Node   string `json:"node"`
+	Status string `json:"status"`
 }
 
 type VirtualMachine struct {

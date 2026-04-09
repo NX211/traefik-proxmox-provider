@@ -99,6 +99,24 @@ Make sure to save the API token value when it's displayed, as it won't be shown 
 
 The provider looks for Traefik labels in the VM/container notes field. Each line in the Notes field starting with `traefik.` will be treated as a Traefik label.
 
+### Naming rules (important)
+
+- **Router and service names are namespaced by Proxmox VMID.** A label like
+  `traefik.http.routers.app.rule=…` on VMID 101 produces a router named
+  `app-101` in the generated Traefik config (and `app-101@plugin-…` in the
+  Traefik dashboard). This prevents silent collisions when two guests use the
+  same router or service name. Same-guest cross-references via
+  `traefik.http.routers.<r>.service=<svc>` are rewritten automatically.
+  Foreign references such as `…service=external@file` are passed through
+  unchanged.
+- **Names must not contain dots.** `traefik.http.routers.my.app.rule=…` is
+  ambiguous (is the name `my` with sub-key `app.rule`, or `my.app` with
+  sub-key `rule`?) and will be rejected with a warning in the Traefik log.
+  Use `myapp` or `my-app` instead.
+- **`traefik.enable` is parsed via Go's `strconv.ParseBool`.** Accepted truthy
+  values: `1`, `t`, `T`, `true`, `True`, `TRUE`. `yes` and `on` are not
+  accepted (this matches Traefik's own Docker provider).
+
 ### Required Labels
 
 - `traefik.enable=true` - Without this label, the VM/container will be ignored
@@ -249,6 +267,15 @@ If your services aren't being discovered:
    ```
 4. **Check token permissions**: Verify in Proxmox UI under **Datacenter → Permissions → API Tokens**
 5. **Provider config location**: The plugin config belongs in Traefik's **static** config (`traefik.yaml`), not dynamic config
+6. **`WARN: 403 Forbidden from Proxmox network-interface API` in the log**:
+   Your API token role is missing the privilege required to read VM network
+   interfaces. On **Proxmox VE 9** this is `VM.GuestAgent.Audit` (the legacy
+   `VM.Monitor` privilege was removed). On PVE 8 it is `VM.Monitor`. See
+   "Proxmox API Token Setup" above for the exact `pveum` commands.
+7. **`Ignoring label … router/service name must be a single token without dots`**:
+   You have a router or service name that contains a dot (e.g.
+   `traefik.http.routers.my.app.rule=…`). Names with dots are ambiguous and
+   are skipped. Use `myapp` or `my-app` instead.
 
 ## Contributing
 

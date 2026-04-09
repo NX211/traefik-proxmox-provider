@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -18,6 +19,32 @@ const (
 	LogLevelInfo  = "info"
 	LogLevelDebug = "debug"
 )
+
+// Sentinel errors used to classify Proxmox API responses by HTTP status.
+// Callers can check with errors.Is to disambiguate (e.g. permission errors
+// vs. agent-not-running) and emit better diagnostics.
+var (
+	ErrUnauthorized = errors.New("proxmox: unauthorized")
+	ErrForbidden    = errors.New("proxmox: forbidden")
+	ErrBadRequest   = errors.New("proxmox: bad request")
+	ErrServerError  = errors.New("proxmox: server error")
+)
+
+// sentinelForStatus returns the matching sentinel for an HTTP status code,
+// or nil for codes we don't classify.
+func sentinelForStatus(code int) error {
+	switch {
+	case code == http.StatusUnauthorized:
+		return ErrUnauthorized
+	case code == http.StatusForbidden:
+		return ErrForbidden
+	case code == http.StatusBadRequest:
+		return ErrBadRequest
+	case code >= 500 && code < 600:
+		return ErrServerError
+	}
+	return nil
+}
 
 // ProxmoxClient represents a client to the Proxmox API
 type ProxmoxClient struct {
@@ -92,6 +119,10 @@ func (c *ProxmoxClient) Do(ctx context.Context, method, path string, body interf
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
+		if sentinel := sentinelForStatus(resp.StatusCode); sentinel != nil {
+			return fmt.Errorf("API request failed with status %d: %s: %w",
+				resp.StatusCode, string(respBody), sentinel)
+		}
 		return fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 

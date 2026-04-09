@@ -1,5 +1,59 @@
 # Changelog
 
+## [Unreleased]
+
+### Breaking
+
+- **Router and service names emitted by this provider are now suffixed with `-<vmid>`.**
+  Previously, two guests that both used the same router/service name (e.g.
+  `traefik.http.routers.app.rule=…`) silently overwrote each other in the
+  generated config. Names are now namespaced by Proxmox VMID — `app` becomes
+  `app-101`. **Migration:** any external Traefik config that referenced these
+  names by their bare form (for example, a middleware chain in the file
+  provider pointing at `app@plugin-traefik-proxmox-provider`) must be updated
+  to the suffixed name. Routing behavior is otherwise unchanged.
+
+### Fixed
+
+- **Router priority no longer hardcoded.** Routers were emitted with
+  `Priority: 1`, which defeats Traefik's rule-length-based default ordering
+  and causes nondeterministic match order when multiple rules tied at 1.
+  Priority is now left at 0 (omitted) unless an explicit
+  `traefik.http.routers.<n>.priority` label is set.
+- **`traefik.enable=1` now works.** The boolean check matched only the literal
+  string `"true"`. It now uses `strconv.ParseBool` to match Traefik's own
+  Docker provider semantics (`1`, `t`, `T`, `true`, `True`, `TRUE` are all
+  truthy; `yes`/`on` are intentionally not accepted).
+- **Multi-IP guests are now load-balanced.** Previously only the first
+  discovered IP was added as a backend; the remaining IPs were dropped on the
+  floor. Each guest-agent IP now becomes its own `Server` entry in the load
+  balancer, sorted lexicographically for stable output across polls.
+- **Router→service binding is now deterministic.** `mapKeysToSlice` returned
+  map keys in random iteration order, so the default-target service for a
+  router with no explicit `…service=` label could flap between polls.
+- **Offline Proxmox nodes are now skipped.** The plugin now reads `status`
+  from `/nodes` and skips any node not reported as `online`, instead of
+  failing through to a noisy per-cycle scan error.
+- **Better diagnostics for PVE 9 token-role errors.** Proxmox VE 9 removed
+  the `VM.Monitor` privilege and replaced it with `VM.GuestAgent.Audit`.
+  Tokens carrying the old role now get a one-shot warning per VM pointing at
+  the README's "Proxmox API Token Setup" section instead of an opaque
+  generic 403.
+- **Router/service names containing dots are now rejected.** Previously the
+  parser silently truncated `traefik.http.routers.my.app.rule` to a router
+  named `my`. Such labels now log a warning and are skipped.
+- **TLS-domain regex no longer recompiled on every poll.** Hoisted to a
+  package-level `var`.
+
+### Added
+
+- Typed sentinel errors in `internal` (`ErrUnauthorized`, `ErrForbidden`,
+  `ErrBadRequest`, `ErrServerError`) for callers that need to disambiguate
+  Proxmox API failure modes via `errors.Is`.
+- Substantially expanded test coverage for `generateConfiguration`,
+  `applyRouterOptions`, `extractLabelName`, `mapKeysToSlice`,
+  `isBoolLabelEnabled`, and the multi-IP fanout in `getServiceURLs`.
+
 ## [v0.7.0] - 2024-03-28
 
 ### Added

@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -203,4 +204,32 @@ func TestParsedAgentInterfaces_GetIPs(t *testing.T) {
 	if ips[1].Address != "10.0.0.1" {
 		t.Errorf("Expected second IP to be 10.0.0.1, got %s", ips[1].Address)
 	}
-} 
+}
+
+func TestNodeStatus_JSONUnmarshal(t *testing.T) {
+	tests := []struct {
+		name       string
+		raw        string
+		wantNode   string
+		wantStatus string
+	}{
+		{"online node", `{"node":"pve1","status":"online"}`, "pve1", "online"},
+		{"offline node", `{"node":"pve2","status":"offline"}`, "pve2", "offline"},
+		{"unknown node", `{"node":"pve3","status":"unknown"}`, "pve3", "unknown"},
+		{"missing status", `{"node":"pve4"}`, "pve4", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var ns NodeStatus
+			if err := json.Unmarshal([]byte(tt.raw), &ns); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if ns.Node != tt.wantNode {
+				t.Errorf("Node = %q, want %q", ns.Node, tt.wantNode)
+			}
+			if ns.Status != tt.wantStatus {
+				t.Errorf("Status = %q, want %q", ns.Status, tt.wantStatus)
+			}
+		})
+	}
+}
