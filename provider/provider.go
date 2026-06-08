@@ -471,6 +471,7 @@ func applyServiceOptions(lb *dynamic.ServersLoadBalancer, service internal.Servi
 	}
 	
 	// Handle HealthCheck
+	// https://doc.traefik.io/traefik/v3.7/reference/routing-configuration/http/load-balancing/service/#health-check
 	if healthcheckPath, exists := service.Config[prefix+".healthcheck.path"]; exists {
 		hc := &dynamic.ServerHealthCheck{
 			Path: healthcheckPath,
@@ -484,6 +485,26 @@ func applyServiceOptions(lb *dynamic.ServersLoadBalancer, service internal.Servi
 			hc.Timeout = timeout
 		}
 		
+		if scheme, exists := service.Config[prefix+".healthcheck.scheme"]; exists {
+			hc.Scheme = scheme
+		}
+
+		if port, exists := service.Config[prefix+".healthcheck.port"]; exists {
+			if val, err := stringToInt(port); err == nil {
+				hc.Port = val
+			}
+		}
+
+		if followRedirects, exists := service.Config[prefix+".healthcheck.followredirects"]; exists {
+			if val, err := stringToBool(followRedirects); err == nil {
+				hc.FollowRedirects = &val
+			}
+		}
+
+		if method, exists := service.Config[prefix+".healthcheck.method"]; exists {
+			hc.Method = method
+		}
+
 		lb.HealthCheck = hc
 	}
 	

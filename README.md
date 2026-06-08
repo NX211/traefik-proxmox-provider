@@ -146,6 +146,11 @@ traefik.http.routers.myapp.tls.options=tlsoptions@file
 traefik.http.services.myservice.loadbalancer.healthcheck.path=/health
 traefik.http.services.myservice.loadbalancer.healthcheck.interval=10s
 traefik.http.services.myservice.loadbalancer.healthcheck.timeout=5s
+traefik.http.services.myservice.loadbalancer.healthcheck.scheme=http
+traefik.http.services.myservice.loadbalancer.healthcheck.port=8088
+traefik.http.services.myservice.loadbalancer.healthcheck.followRedirects=true
+traefik.http.services.myservice.loadbalancer.healthcheck.method=GET
+
 ```
 
 #### Sticky Sessions
