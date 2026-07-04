@@ -403,6 +403,12 @@ func generateConfiguration(servicesMap map[string][]internal.Service) *dynamic.C
 				
 				// Find target service (prefer explicit mapping)
 				targetService := serviceNames[0]
+				for _, sn := range serviceNames {
+					if sn == routerName {
+						targetService = sn
+						break
+					}
+				}
 				serviceLabel := fmt.Sprintf("traefik.http.routers.%s.service", routerName)
 				if val, exists := service.Config[serviceLabel]; exists {
 					targetService = val

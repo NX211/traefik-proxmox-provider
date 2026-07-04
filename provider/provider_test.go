@@ -394,3 +394,38 @@ func TestHandleRouterTLS_ArrayDomains(t *testing.T) {
 		})
 	}
 }
+
+func TestGenerateConfiguration_MultipleRouters(t *testing.T) {
+	// A single service defining multiple routers and multiple services should
+	// wire each router to the service whose name matches the router, rather than
+	// pointing every router at the first service.
+	service := internal.Service{
+		ID:   100,
+		Name: "multi",
+		Config: map[string]string{
+			"traefik.enable":                                     "true",
+			"traefik.http.routers.blog.rule":                     "Host(`blog.example.com`)",
+			"traefik.http.routers.shop.rule":                     "Host(`shop.example.com`)",
+			"traefik.http.services.blog.loadbalancer.server.url": "http://23.45.67.89:8080",
+			"traefik.http.services.shop.loadbalancer.server.url": "http://23.45.67.90:8080",
+		},
+	}
+	servicesMap := map[string][]internal.Service{"node1": {service}}
+
+	config := generateConfiguration(servicesMap)
+
+	if len(config.HTTP.Routers) != 2 {
+		t.Fatalf("Expected 2 routers, got %d: %v", len(config.HTTP.Routers), config.HTTP.Routers)
+	}
+
+	for _, name := range []string{"blog", "shop"} {
+		router, exists := config.HTTP.Routers[name]
+		if !exists {
+			t.Errorf("Expected router %q to exist", name)
+			continue
+		}
+		if router.Service != name {
+			t.Errorf("Router %q should target service %q, got %q", name, name, router.Service)
+		}
+	}
+}
