@@ -203,4 +203,49 @@ func TestParsedAgentInterfaces_GetIPs(t *testing.T) {
 	if ips[1].Address != "10.0.0.1" {
 		t.Errorf("Expected second IP to be 10.0.0.1, got %s", ips[1].Address)
 	}
-} 
+}
+
+func TestParseCIDR(t *testing.T) {
+	// parseCIDR turns a DHCP inet/inet6 CIDR string into an IP, used to infer
+	// container IPs when the guest agent reports no addresses.
+	tests := []struct {
+		name string
+		cidr string
+		want IP
+	}{
+		{
+			name: "ipv4 with prefix",
+			cidr: "8.8.8.8/24",
+			want: IP{Address: "8.8.8.8", AddressType: "ipv4", Prefix: 24},
+		},
+		{
+			name: "ipv6 with prefix",
+			cidr: "fe80::1/64",
+			want: IP{Address: "fe80::1", AddressType: "ipv6", Prefix: 64},
+		},
+		{
+			name: "address without prefix",
+			cidr: "10.0.0.5",
+			want: IP{Address: "10.0.0.5", AddressType: "ipv4", Prefix: 0},
+		},
+		{
+			name: "invalid prefix is ignored",
+			cidr: "10.0.0.5/notanumber",
+			want: IP{Address: "10.0.0.5", AddressType: "ipv4", Prefix: 0},
+		},
+		{
+			name: "empty string yields zero IP",
+			cidr: "",
+			want: IP{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseCIDR(tt.cidr)
+			if got != tt.want {
+				t.Errorf("parseCIDR(%q) = %+v, want %+v", tt.cidr, got, tt.want)
+			}
+		})
+	}
+}

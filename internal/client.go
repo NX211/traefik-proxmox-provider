@@ -9,7 +9,8 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strconv" // Added import
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -233,7 +234,7 @@ func (c *ProxmoxClient) GetContainerNetworkInterfaces(ctx context.Context, nodeN
 	for _, iface := range response.Data {
 		var ips []IP
 		for _, ip := range iface.IPAddresses {
-			prefixUint, err := strconv.ParseUint(ip.Prefix.String(), 10, 64) // Changed to use strconv.ParseUint
+			prefixUint, err := strconv.ParseUint(ip.Prefix.String(), 10, 64)
 			if err != nil {
 				// Log error but continue, as some IPs might be valid
 				if c.LogLevel == LogLevelDebug {
@@ -248,6 +249,20 @@ func (c *ProxmoxClient) GetContainerNetworkInterfaces(ctx context.Context, nodeN
 			})
 		}
 
+		// when iface.IPAddresses is empty, we might infer IP from DHCP inet value
+		if len(ips) == 0 {
+			if c.LogLevel == LogLevelDebug {
+				log.Printf("DEBUG: No valid IPs found for '%s', trying inet values: %+v", iface.Name, []string{iface.Inet, iface.Inet6})
+			}
+
+			if ip := parseCIDR(iface.Inet); ip.Address != "" {
+				ips = append(ips, ip)
+			}
+			if ip6 := parseCIDR(iface.Inet6); ip6.Address != "" {
+				ips = append(ips, ip6)
+			}
+		}
+
 		result.Result = append(result.Result, struct {
 			IPAddresses []IP `json:"ip-addresses"`
 		}{
@@ -256,4 +271,30 @@ func (c *ProxmoxClient) GetContainerNetworkInterfaces(ctx context.Context, nodeN
 	}
 
 	return result, nil
+}
+
+func parseCIDR(cidr string) IP {
+	if cidr == "" {
+		return IP{}
+	}
+
+	parts := strings.Split(cidr, "/")
+	address := parts[0]
+	var prefix uint64
+	if len(parts) > 1 {
+		if p, err := strconv.ParseUint(parts[1], 10, 64); err == nil {
+			prefix = p
+		}
+	}
+
+	addressType := "ipv4"
+	if strings.Contains(address, ":") {
+		addressType = "ipv6"
+	}
+
+	return IP{
+		Address:     address,
+		AddressType: addressType,
+		Prefix:      prefix,
+	}
 }
