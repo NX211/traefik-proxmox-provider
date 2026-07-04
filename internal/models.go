@@ -66,6 +66,7 @@ func (pc *ParsedConfig) GetTraefikMap() map[string]string {
 			continue
 		}
 
+		key = strings.Trim(key, "- ")
 		key = strings.Trim(key, "\" ")
 		value = strings.Trim(value, "\" ")
 

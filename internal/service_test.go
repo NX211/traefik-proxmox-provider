@@ -203,4 +203,62 @@ func TestParsedAgentInterfaces_GetIPs(t *testing.T) {
 	if ips[1].Address != "10.0.0.1" {
 		t.Errorf("Expected second IP to be 10.0.0.1, got %s", ips[1].Address)
 	}
-} 
+}
+
+func TestParsedConfig_GetTraefikMap_Bullets(t *testing.T) {
+	// Proxmox notes/descriptions are often written as bullet lists. A leading
+	// dash bullet is trimmed off the key so labels written as dash bullets are
+	// still parsed.
+	tests := []struct {
+		name        string
+		description string
+		want        map[string]string
+	}{
+		{
+			name:        "dash bullets with space",
+			description: "- traefik.enable=true\n- traefik.http.routers.test.rule=Host(`test.example.com`)",
+			want: map[string]string{
+				"traefik.enable":                 "true",
+				"traefik.http.routers.test.rule": "Host(`test.example.com`)",
+			},
+		},
+		{
+			name:        "dash bullet without space",
+			description: "-traefik.enable=true",
+			want: map[string]string{
+				"traefik.enable": "true",
+			},
+		},
+		{
+			// Leading spaces before the dash are trimmed along with it.
+			name:        "indented dash bullet",
+			description: "   -traefik.enable=true",
+			want: map[string]string{
+				"traefik.enable": "true",
+			},
+		},
+		{
+			// Only a dash marks a bullet; other chars are not stripped, so the
+			// label is dropped.
+			name:        "non-dash bullet without space is not parsed",
+			description: "*traefik.enable=true",
+			want:        map[string]string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pc := ParsedConfig{Description: tt.description}
+			m := pc.GetTraefikMap()
+
+			if len(m) != len(tt.want) {
+				t.Fatalf("Expected %d config items, got %d: %v", len(tt.want), len(m), m)
+			}
+			for k, v := range tt.want {
+				if m[k] != v {
+					t.Errorf("Expected %s=%s, got %s", k, v, m[k])
+				}
+			}
+		})
+	}
+}
