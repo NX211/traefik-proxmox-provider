@@ -36,7 +36,9 @@ func TestProviderNew(t *testing.T) {
 				ApiValidateSSL: "true",
 				ApiLogging:     "info",
 			},
-			wantErr: true, // We expect an error because the domain doesn't exist
+			// The endpoint doesn't exist, but an unreachable endpoint is no
+			// longer fatal at startup: it is retried on every poll.
+			wantErr: false,
 		},
 		{
 			name:    "Nil config",

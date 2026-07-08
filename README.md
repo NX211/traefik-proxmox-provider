@@ -53,6 +53,46 @@ providers:
 | `apiToken` | `string` | - | The API token secret |
 | `apiLogging` | `string` | `"info"` | Log level for API operations ("debug" or "info") |
 | `apiValidateSSL` | `string` | `"true"` | Whether to validate SSL certificates |
+| `nodes` | `list` | - | Multiple Proxmox endpoints (see [Multiple Proxmox Endpoints](#multiple-proxmox-endpoints)) |
+
+### Multiple Proxmox Endpoints
+
+If your VMs and containers are spread across separate, standalone Proxmox installations (not joined in a cluster), a single `apiEndpoint` can only see one of them. The `nodes` list lets one plugin instance poll several Proxmox APIs and merge everything it finds into a single dynamic configuration.
+
+> **Note:** If your Proxmox nodes are part of the same cluster you don't need this — the plugin already discovers every node in a cluster through a single `apiEndpoint`.
+
+Each entry accepts the same fields as the flat single-endpoint config, plus a `name`:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `name` | `string` | `node-<index>` | Logical name for this endpoint, used in logs and to disambiguate auto-generated router/service IDs |
+| `apiEndpoint` | `string` | - | The URL of this Proxmox VE API |
+| `apiTokenId` | `string` | - | The API token ID for this endpoint |
+| `apiToken` | `string` | - | The API token secret for this endpoint |
+| `apiLogging` | `string` | `"info"` | Log level for this endpoint |
+| `apiValidateSSL` | `string` | `"true"` | Whether to validate SSL certificates for this endpoint |
+
+```yaml
+providers:
+  plugin:
+    traefik-proxmox-provider:
+      pollInterval: "30s"
+      nodes:
+        - name: "pve1"
+          apiEndpoint: "https://pve1.example.com:8006"
+          apiTokenId: "root@pam!traefik"
+          apiToken: "your-token-1"
+        - name: "pve2"
+          apiEndpoint: "https://pve2.example.com:8006"
+          apiTokenId: "root@pam!traefik"
+          apiToken: "your-token-2"
+```
+
+A few things worth knowing about this mode:
+
+- The flat single-endpoint config keeps working exactly as before. When `nodes` is present, the flat `apiEndpoint`/`apiTokenId`/`apiToken` fields are ignored.
+- An endpoint that is down does not stop the provider from starting, and it never affects the routes discovered on the other endpoints. Unreachable endpoints are logged as warnings and retried on every poll.
+- When a VM/container has `traefik.enable=true` but no explicit router/service names in its labels, the auto-generated fallback IDs are prefixed with the endpoint `name` (e.g. `pve1-myvm-100`) so identical VM names or IDs on different hosts can't collide. Explicit names from labels (e.g. `traefik.http.routers.myapp.rule=...`) are used as-is — keeping those unique across hosts is up to you.
 
 ## Proxmox API Token Setup
 

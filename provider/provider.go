@@ -19,14 +19,25 @@ import (
 	"github.com/traefik/genconf/dynamic/types"
 )
 
-// Config the plugin configuration.
-type Config struct {
-	PollInterval   string `json:"pollInterval" yaml:"pollInterval" toml:"pollInterval"`
+// NodeConfig represents the configuration for a single Proxmox endpoint.
+type NodeConfig struct {
+	Name           string `json:"name" yaml:"name" toml:"name"`
 	ApiEndpoint    string `json:"apiEndpoint" yaml:"apiEndpoint" toml:"apiEndpoint"`
 	ApiTokenId     string `json:"apiTokenId" yaml:"apiTokenId" toml:"apiTokenId"`
 	ApiToken       string `json:"apiToken" yaml:"apiToken" toml:"apiToken"`
 	ApiLogging     string `json:"apiLogging" yaml:"apiLogging" toml:"apiLogging"`
 	ApiValidateSSL string `json:"apiValidateSSL" yaml:"apiValidateSSL" toml:"apiValidateSSL"`
+}
+
+// Config the plugin configuration.
+type Config struct {
+	PollInterval   string       `json:"pollInterval" yaml:"pollInterval" toml:"pollInterval"`
+	ApiEndpoint    string       `json:"apiEndpoint" yaml:"apiEndpoint" toml:"apiEndpoint"`
+	ApiTokenId     string       `json:"apiTokenId" yaml:"apiTokenId" toml:"apiTokenId"`
+	ApiToken       string       `json:"apiToken" yaml:"apiToken" toml:"apiToken"`
+	ApiLogging     string       `json:"apiLogging" yaml:"apiLogging" toml:"apiLogging"`
+	ApiValidateSSL string       `json:"apiValidateSSL" yaml:"apiValidateSSL" toml:"apiValidateSSL"`
+	Nodes          []NodeConfig `json:"nodes" yaml:"nodes" toml:"nodes"`
 }
 
 // CreateConfig creates the default plugin configuration.
@@ -38,12 +49,51 @@ func CreateConfig() *Config {
 	}
 }
 
+// namedClient associates a logical name with a Proxmox API client.
+type namedClient struct {
+	name          string
+	client        *internal.ProxmoxClient
+	versionLogged bool
+}
+
 // Provider a plugin.
 type Provider struct {
 	name         string
 	pollInterval time.Duration
-	client       *internal.ProxmoxClient
+	clients      []*namedClient
 	cancel       func()
+}
+
+// normalizeNodes converts the Config into a canonical []NodeConfig slice.
+// If Nodes is populated it is returned directly (with defaults filled in);
+// otherwise a single-element slice is synthesized from the legacy flat
+// fields for backward compatibility.
+func normalizeNodes(config *Config) []NodeConfig {
+	if len(config.Nodes) > 0 {
+		for i := range config.Nodes {
+			if config.Nodes[i].ApiLogging == "" {
+				config.Nodes[i].ApiLogging = "info"
+			}
+			if config.Nodes[i].ApiValidateSSL == "" {
+				config.Nodes[i].ApiValidateSSL = "true"
+			}
+			if config.Nodes[i].Name == "" {
+				config.Nodes[i].Name = fmt.Sprintf("node-%d", i)
+			}
+		}
+		return config.Nodes
+	}
+
+	return []NodeConfig{
+		{
+			Name:           "default",
+			ApiEndpoint:    config.ApiEndpoint,
+			ApiTokenId:     config.ApiTokenId,
+			ApiToken:       config.ApiToken,
+			ApiLogging:     config.ApiLogging,
+			ApiValidateSSL: config.ApiValidateSSL,
+		},
+	}
 }
 
 // New creates a new Provider plugin.
@@ -62,26 +112,34 @@ func New(ctx context.Context, config *Config, name string) (*Provider, error) {
 		return nil, fmt.Errorf("poll interval must be at least 5 seconds, got %v", pi)
 	}
 
-	pc, err := newParserConfig(
-		config.ApiEndpoint,
-		config.ApiTokenId,
-		config.ApiToken,
-		config.ApiLogging,
-		config.ApiValidateSSL == "true",
-	)
-	if err != nil {
-		return nil, fmt.Errorf("invalid parser config: %w", err)
-	}
-	client := newClient(pc)
+	nodes := normalizeNodes(config)
+	clients := make([]*namedClient, 0, len(nodes))
 
-	if err := logVersion(client, ctx); err != nil {
-		return nil, fmt.Errorf("failed to get Proxmox version: %w", err)
+	for _, node := range nodes {
+		pc, err := newParserConfig(
+			node.ApiEndpoint,
+			node.ApiTokenId,
+			node.ApiToken,
+			node.ApiLogging,
+			node.ApiValidateSSL == "true",
+		)
+		if err != nil {
+			return nil, fmt.Errorf("invalid parser config for node %q: %w", node.Name, err)
+		}
+
+		// An unreachable endpoint is not fatal here: it is logged and retried
+		// on every poll, so one Proxmox host being down never prevents the
+		// provider (and the routes of the remaining hosts) from starting.
+		nc := &namedClient{name: node.Name, client: newClient(pc)}
+		maybeLogVersion(nc, ctx)
+
+		clients = append(clients, nc)
 	}
 
 	return &Provider{
 		name:         name,
 		pollInterval: pi,
-		client:       client,
+		clients:      clients,
 	}, nil
 }
 
@@ -130,12 +188,15 @@ func (p *Provider) loadConfiguration(ctx context.Context, cfgChan chan<- json.Ma
 }
 
 func (p *Provider) updateConfiguration(ctx context.Context, cfgChan chan<- json.Marshaler) error {
-	servicesMap, err := getServiceMap(p.client, ctx)
-	if err != nil {
-		return fmt.Errorf("error getting service map: %w", err)
+	clusterMaps := getServiceMaps(p.clients, ctx)
+
+	// If every endpoint failed, keep the previous configuration instead of
+	// pushing an empty one that would wipe all discovered routes.
+	if len(clusterMaps) == 0 && len(p.clients) > 0 {
+		return errors.New("all Proxmox endpoints are unreachable, keeping previous configuration")
 	}
 
-	configuration := generateConfiguration(servicesMap)
+	configuration := generateConfiguration(clusterMaps, len(p.clients) > 1)
 	cfgChan <- &dynamic.JSONPayload{Configuration: configuration}
 	return nil
 }
@@ -174,32 +235,76 @@ func newClient(pc ParserConfig) *internal.ProxmoxClient {
 	return internal.NewProxmoxClient(pc.ApiEndpoint, pc.TokenId, pc.Token, pc.ValidateSSL, pc.LogLevel)
 }
 
-func logVersion(client *internal.ProxmoxClient, ctx context.Context) error {
-	version, err := client.GetVersion(ctx)
-	if err != nil {
-		return err
+// maybeLogVersion logs the Proxmox version of an endpoint once, on the first
+// successful contact. Failures are warnings: the endpoint is retried on every
+// poll until it answers.
+func maybeLogVersion(nc *namedClient, ctx context.Context) {
+	if nc.versionLogged {
+		return
 	}
-	log.Printf("Connected to Proxmox VE version %s", version.Release)
-	return nil
+
+	version, err := nc.client.GetVersion(ctx)
+	if err != nil {
+		log.Printf("WARN: Proxmox endpoint %q is unreachable, will retry on next poll: %v", nc.name, err)
+		return
+	}
+
+	log.Printf("Connected to Proxmox VE version %s (endpoint %q)", version.Release, nc.name)
+	nc.versionLogged = true
 }
 
-func getServiceMap(client *internal.ProxmoxClient, ctx context.Context) (map[string][]internal.Service, error) {
+// clusterServiceMap holds the services discovered from a single Proxmox
+// endpoint, keyed by Proxmox node name, along with the logical name of the
+// endpoint.
+type clusterServiceMap struct {
+	clusterName string
+	services    map[string][]internal.Service
+}
+
+// getServiceMaps polls every configured endpoint. A failing endpoint is
+// logged and skipped so it never affects the services discovered by the
+// remaining endpoints.
+func getServiceMaps(clients []*namedClient, ctx context.Context) []clusterServiceMap {
+	results := make([]clusterServiceMap, 0, len(clients))
+
+	for i := 0; i < len(clients); i++ {
+		maybeLogVersion(clients[i], ctx)
+
+		csm, err := getServiceMapForClient(clients[i], ctx)
+		if err != nil {
+			log.Printf("Error scanning nodes for endpoint %q: %v", clients[i].name, err)
+			continue
+		}
+		results = append(results, csm)
+	}
+
+	return results
+}
+
+// getServiceMapForClient queries a single Proxmox endpoint. Extracted into
+// its own function to guarantee clean variable scoping under yaegi
+// (Traefik's Go interpreter).
+func getServiceMapForClient(nc *namedClient, ctx context.Context) (clusterServiceMap, error) {
 	servicesMap := make(map[string][]internal.Service)
 
-	nodes, err := client.GetNodes(ctx)
+	nodes, err := nc.client.GetNodes(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("error scanning nodes: %w", err)
+		return clusterServiceMap{}, err
 	}
 
 	for _, nodeStatus := range nodes {
-		services, err := scanServices(client, ctx, nodeStatus.Node)
+		services, err := scanServices(nc.client, ctx, nodeStatus.Node)
 		if err != nil {
-			log.Printf("Error scanning services on node %s: %v", nodeStatus.Node, err)
+			log.Printf("Error scanning services on node %s (endpoint %q): %v", nodeStatus.Node, nc.name, err)
 			continue
 		}
 		servicesMap[nodeStatus.Node] = services
 	}
-	return servicesMap, nil
+
+	return clusterServiceMap{
+		clusterName: nc.name,
+		services:    servicesMap,
+	}, nil
 }
 
 func getIPsOfService(client *internal.ProxmoxClient, ctx context.Context, nodeName string, vmID uint64, isContainer bool) (ips []internal.IP, err error) {
@@ -234,7 +339,12 @@ func getIPsOfService(client *internal.ProxmoxClient, ctx context.Context, nodeNa
 	return filteredIPs, nil
 }
 
-func scanServices(client *internal.ProxmoxClient, ctx context.Context, nodeName string) (services []internal.Service, err error) {
+func scanServices(client *internal.ProxmoxClient, ctx context.Context, nodeName string) ([]internal.Service, error) {
+	// Use an explicit local slice instead of a named return value. Yaegi
+	// (Traefik's Go interpreter) can fail to re-initialize named return
+	// variables between calls, causing results to accumulate.
+	services := make([]internal.Service, 0)
+
 	// Scan virtual machines
 	vms, err := client.GetVirtualMachines(ctx, nodeName)
 	if err != nil {
@@ -308,7 +418,7 @@ func scanServices(client *internal.ProxmoxClient, ctx context.Context, nodeName 
 	return services, nil
 }
 
-func generateConfiguration(servicesMap map[string][]internal.Service) *dynamic.Configuration {
+func generateConfiguration(clusterMaps []clusterServiceMap, multiEndpoint bool) *dynamic.Configuration {
 	config := &dynamic.Configuration{
 		HTTP: &dynamic.HTTPConfiguration{
 			Routers:           make(map[string]*dynamic.Router),
@@ -330,8 +440,19 @@ func generateConfiguration(servicesMap map[string][]internal.Service) *dynamic.C
 		},
 	}
 
+	for _, csm := range clusterMaps {
+		addEndpointConfiguration(config, csm, multiEndpoint)
+	}
+
+	return config
+}
+
+// addEndpointConfiguration adds routers and services discovered on a single
+// Proxmox endpoint to the dynamic configuration. Extracted into its own
+// function to guarantee clean variable scoping under yaegi.
+func addEndpointConfiguration(config *dynamic.Configuration, csm clusterServiceMap, multiEndpoint bool) {
 	// Loop through all node service maps
-	for nodeName, services := range servicesMap {
+	for nodeName, services := range csm.services {
 		// Loop through all services in this node
 		for _, service := range services {
 			// Skip disabled services
@@ -359,8 +480,13 @@ func generateConfiguration(servicesMap map[string][]internal.Service) *dynamic.C
 				}
 			}
 			
-			// Default to service ID if no names found
+			// Default to service ID if no names found. With multiple
+			// endpoints configured, prefix with the endpoint name so equal
+			// VM names/IDs on standalone hosts cannot collide.
 			defaultID := fmt.Sprintf("%s-%d", service.Name, service.ID)
+			if multiEndpoint {
+				defaultID = fmt.Sprintf("%s-%s-%d", csm.clusterName, service.Name, service.ID)
+			}
 			
 			// Convert maps to slices
 			routerNames := mapKeysToSlice(routerPrefixMap)
@@ -421,11 +547,9 @@ func generateConfiguration(servicesMap map[string][]internal.Service) *dynamic.C
 				config.HTTP.Routers[routerName] = router
 			}
 			
-			log.Printf("Created router and service for %s (ID: %d)", service.Name, service.ID)
+			log.Printf("Created router and service for %s (ID: %d) on endpoint %q", service.Name, service.ID, csm.clusterName)
 		}
 	}
-	
-	return config
 }
 
 // Apply router configuration options from labels
@@ -683,6 +807,20 @@ func boolPtr(v bool) *bool {
 	return &v
 }
 
+// validateNodeConfig validates a single node configuration entry.
+func validateNodeConfig(nc NodeConfig, label string) error {
+	if nc.ApiEndpoint == "" {
+		return fmt.Errorf("%s: API endpoint must be set", label)
+	}
+	if nc.ApiTokenId == "" {
+		return fmt.Errorf("%s: API token ID must be set", label)
+	}
+	if nc.ApiToken == "" {
+		return fmt.Errorf("%s: API token must be set", label)
+	}
+	return nil
+}
+
 // validateConfig validates the plugin configuration
 func validateConfig(config *Config) error {
 	if config == nil {
@@ -693,6 +831,21 @@ func validateConfig(config *Config) error {
 		return errors.New("poll interval must be set")
 	}
 
+	// Multi-endpoint configuration
+	if len(config.Nodes) > 0 {
+		for i, node := range config.Nodes {
+			label := fmt.Sprintf("nodes[%d]", i)
+			if node.Name != "" {
+				label = fmt.Sprintf("node %q", node.Name)
+			}
+			if err := validateNodeConfig(node, label); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	// Legacy single-endpoint configuration
 	if config.ApiEndpoint == "" {
 		return errors.New("API endpoint must be set")
 	}

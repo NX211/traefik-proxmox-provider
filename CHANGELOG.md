@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Multiple Proxmox endpoints in a single plugin instance via the `nodes` list, for VMs/containers spread across standalone (non-clustered) Proxmox hosts. Based on the approach from PR #43 by @jonmilele.
+- Auto-generated router/service IDs are prefixed with the endpoint `name` when multiple endpoints are configured, so identical VM names/IDs on different hosts don't collide.
+- Per-endpoint connection log: the Proxmox VE version and logical endpoint name are logged on the first successful poll of each endpoint.
+
+### Changed
+
+- An unreachable Proxmox endpoint no longer aborts provider startup. It is logged as a warning and retried on every poll, and a failing endpoint never affects routes discovered on the remaining endpoints. Structurally invalid configuration (missing endpoint/token fields) is still a fatal error, per entry.
+- When every configured endpoint is unreachable during a poll, the previous dynamic configuration is kept instead of pushing an empty one.
+
 ## [v0.7.0] - 2024-03-28
 
 ### Added
