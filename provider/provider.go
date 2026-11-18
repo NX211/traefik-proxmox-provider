@@ -129,6 +129,14 @@ func (p *Provider) loadConfiguration(ctx context.Context, cfgChan chan<- json.Ma
 	}
 }
 
+type rawJSONPayload struct {
+	data []byte
+}
+
+func (r rawJSONPayload) MarshalJSON() ([]byte, error) {
+	return r.data, nil
+}
+
 func (p *Provider) updateConfiguration(ctx context.Context, cfgChan chan<- json.Marshaler) error {
 	servicesMap, err := getServiceMap(p.client, ctx)
 	if err != nil {
@@ -136,7 +144,11 @@ func (p *Provider) updateConfiguration(ctx context.Context, cfgChan chan<- json.
 	}
 
 	configuration := generateConfiguration(servicesMap)
-	cfgChan <- &dynamic.JSONPayload{Configuration: configuration}
+	data, err := json.Marshal(configuration)
+	if err != nil {
+		return fmt.Errorf("error marshaling configuration: %w", err)
+	}
+	cfgChan <- rawJSONPayload{data: data}
 	return nil
 }
 
@@ -664,7 +676,7 @@ func stringToBool(s string) (bool, error) {
 	case "true", "1", "yes", "on":
 		return true, nil
 	case "false", "0", "no", "off":
-		return false, nil
+		return false, fmt.Errorf("cannot convert %s to bool", s)
 	default:
 		return false, fmt.Errorf("cannot convert %s to bool", s)
 	}
